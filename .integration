@@ -1,0 +1,4 @@
+command = python sftp_to_ov.py -v -p settings.json -w t-mobile.onevizion.com
+settings_file_name = settings.json
+default_schedule = 0/15 0 0 * * ?
+read_from_stdout = true
