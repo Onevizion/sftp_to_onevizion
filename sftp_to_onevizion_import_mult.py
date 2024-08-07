@@ -59,12 +59,18 @@ def sortalist(listOfFileName,dateprefix,datecruft,datefmt):
 		r = p.search(f)
 		return datetime.strptime(r.group(0).replace(datecruft,''), datefmt)
 
+	# ignore files that end with .filepart since that is a sign that the file is still in transit
+	newListOfFilename = []
+	for fn in listOfFileName:
+		if not fn.endswith('.filepart'):
+			newListOfFilename.append(fn)
+
 	if datefmt is None:
-		return listOfFileName
+		return newListOfFilename
 	else:
 		# administrators are more comfortable with oracle date formatting.  so change it into srtptime format if necessary
 		datefmt = datefmt.replace('YYYY','%Y').replace('MM','%m').replace('DD','%d').replace('HH','%H').replace('MI','%M').replace('SS','%S')
-		return sorted(listOfFileName,key=return_date_from_filename)
+		return sorted(newListOfFilename,key=return_date_from_filename)
 
 
 ###### Run an import and wait for it to complete
