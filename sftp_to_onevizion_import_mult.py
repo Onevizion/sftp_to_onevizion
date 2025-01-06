@@ -152,11 +152,22 @@ for row in Req.jsonData:
 
 		password = SFtpPasswords[row['SOI_SFTP_HOST']][row['SOI_SFTP_USER_NAME']]
 
-		sftp = pysftp.Connection(row['SOI_SFTP_HOST'],
-			username=row['SOI_SFTP_USER_NAME'],
-			password=password,
-			cnopts = cnopts
-			)
+		if password.startswith('-----'):
+			# it is a key with \n instead of newlines.
+			with open('key.txt', 'w') as the_file:
+				the_file.write(password)
+			
+			sftp = pysftp.Connection(row['SOI_SFTP_HOST'],
+				username=row['SOI_SFTP_USER_NAME'],
+				private_key='key.txt',
+				cnopts = cnopts
+				)
+		else:
+			sftp = pysftp.Connection(row['SOI_SFTP_HOST'],
+				username=row['SOI_SFTP_USER_NAME'],
+				password=password,
+				cnopts = cnopts
+				)
 	except:
 		Trace['SFTP Connect'] = sys.exc_info()[0]
 		Message('could not connect')

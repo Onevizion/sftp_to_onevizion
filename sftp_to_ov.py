@@ -117,11 +117,22 @@ try:
 	cnopts.compression = False
 	cnopts.ciphers = None
 	cnopts.hostkeys = None
-	sftp = pysftp.Connection(parameters['SFTP']['url'],
-		username=parameters['SFTP']['UserName'],
-		password=parameters['SFTP']['Password'],
-		cnopts = cnopts
-		)
+	if parameters['SFTP']['Password'].startswith('-----'):
+		# it is a key with \n instead of newlines.
+		with open('key.txt', 'w') as the_file:
+			the_file.write(parameters['SFTP']['Password'])
+		
+		sftp = pysftp.Connection(parameters['SFTP']['url'],
+			username=parameters['SFTP']['UserName'],
+			private_key='key.txt',
+			cnopts = cnopts
+			)
+	else:
+		sftp = pysftp.Connection(parameters['SFTP']['url'],
+			username=parameters['SFTP']['UserName'],
+			password=parameters['SFTP']['Password'],
+			cnopts = cnopts
+			)
 except:
 	Trace['SFTP Connect'] = sys.exc_info()[0]
 	quit(1)
