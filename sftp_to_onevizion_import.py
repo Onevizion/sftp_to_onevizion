@@ -123,8 +123,13 @@ class MyCnOpts:  #used by sftp connection
 	pass
 
 #####  Main section
+try:
+	filters = {'SOI_ENABLED':'1', 'SOI_IMPORT_GROUP':params['OV']['ImportGroup']}
+except KeyError as e:
+	filters = {'SOI_ENABLED':'1'}
+
 Req = onevizion.Trackor(trackorType = 'SFTP_TO_OV', URL = OvUrl, userName=OvUserName, password=OvPassword)
-Req.read(filters = {'SOI_ENABLED':'1'}, 
+Req.read(filters = filters, 
 		fields = ['TRACKOR_KEY','SOI_SFTP_HOST', 'SOI_SFTP_USER_NAME', 'SOI_ORDER_TO_PROCESS',
 					'SOI_SFTP_FOLDER', 'SOI_FILE_MASK', 'SOI_IMPORT_NAME', 'SOI_ACTION', 'SOI_IMPORT_ID',
 					'SOI_SFTP_ARCHIVE_FOLDER', 'SOI_DAYS_TO_KEEP_IN_ARCHIVE',
