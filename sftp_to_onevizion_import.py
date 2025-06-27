@@ -63,7 +63,6 @@ def runAndWaitForImport(filename, impspec, action, maxRunTimeInMinutes):
 	maxTries = maxRunTimeInMinutes * 60 / 10
 
 	Message(filename+' x '+impspec+' x '+action)
-	Message('Kilroy was not here')
 	imp = onevizion.Import(
 		userName = OvUserName,
 		password = OvPassword,
@@ -85,7 +84,7 @@ def runAndWaitForImport(filename, impspec, action, maxRunTimeInMinutes):
 	d = True
 	while d:
 		time.sleep(10)
-		Message('Checking status '+str(tries)+' tries '+str(tries/6)+' minutes')
+		#Message('Checking status '+str(tries)+' tries '+str(tries/6)+' minutes')
 
 		tries = tries + 1
 		if tries>maxTries:
@@ -122,6 +121,31 @@ def runAndWaitForImport(filename, impspec, action, maxRunTimeInMinutes):
 class MyCnOpts:  #used by sftp connection
 	pass
 
+def sftpConnect(host, user, password):
+	#not best practice, but avoids needing entry in .ssh/known_hosts
+	#from Joe Cool near end of https://bitbucket.org/dundeemt/pysftp/issues/109/hostkeysexception-no-host-keys-found-even
+	cnopts = MyCnOpts()
+	cnopts.log = False
+	cnopts.compression = False
+	cnopts.ciphers = None
+	cnopts.hostkeys = None
+
+	try:
+		if password.startswith('-----'):
+			# it is a key with \n instead of newlines.
+			with open('key.txt', 'w') as the_file:
+				the_file.write(password)
+			
+			return pysftp.Connection(host, username=user, private_key='key.txt', cnopts=cnopts)
+		else:
+			return pysftp.Connection(host, username=user, password=password, cnopts=cnopts)
+	except:
+		Trace['SFTP Connect'] = sys.exc_info()[0]
+		Message('could not connect')
+		Message(sys.exc_info())
+		quit(1)
+	
+
 #####  Main section
 try:
 	filters = {'SOI_ENABLED':'1', 'SOI_IMPORT_GROUP':params['OV']['ImportGroup']}
@@ -146,7 +170,9 @@ for row in Req.jsonData:
 	print(row)
 
 	# connect to SFTP
-	try:
+	password = SFtpPasswords[row['SOI_SFTP_HOST']][row['SOI_SFTP_USER_NAME']]
+	sftp = sftpConnect(row['SOI_SFTP_HOST'], row['SOI_SFTP_USER_NAME'], password)
+	'''	try:
 		#not best practice, but avoids needing entry in .ssh/known_hosts
 		#from Joe Cool near end of https://bitbucket.org/dundeemt/pysftp/issues/109/hostkeysexception-no-host-keys-found-even
 		cnopts = MyCnOpts()
@@ -178,7 +204,7 @@ for row in Req.jsonData:
 		Message('could not connect')
 		Message(sys.exc_info())
 		quit(1)
-
+	'''
 	#todo error handling
 	# get complete list of files in directory
 	with sftp.cd(row['SOI_SFTP_FOLDER']):
@@ -234,6 +260,7 @@ for row in Req.jsonData:
 			maxRunTimeInMinutes = int(row['SOI_MAX_RUNTIME_IN_MINUTES'])
 
 		if runAndWaitForImport(f,row['SOI_IMPORT_ID'],row['SOI_ACTION'],maxRunTimeInMinutes):
+			sftp = sftpConnect(row['SOI_SFTP_HOST'], row['SOI_SFTP_USER_NAME'], password) # re-connect to SFTP after import as connection might have been lost
 			if row['SOI_EXTRA_SFTP_COMMAND'] is not None:
 				extracmd = "sftp."+row['SOI_EXTRA_SFTP_COMMAND'].replace('{filename}',f)
 				print(extracmd)
