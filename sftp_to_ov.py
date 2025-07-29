@@ -12,7 +12,7 @@ import time
 import os
 from datetime import datetime
 
-PROCESSED_FOLDER_NAME = 'processed'
+DEFAULT_PROCESSED_FOLDER_NAME = 'processed'
 
 Description="""Import files from SFTP to OV in order
 """
@@ -44,6 +44,30 @@ if len(PDError) > 3:
 
 website = parameters[args.website]
 #Message(website)
+
+def sftpConnect(host, user, password):
+	#not best practice, but avoids needing entry in .ssh/known_hosts
+	#from Joe Cool near end of https://bitbucket.org/dundeemt/pysftp/issues/109/hostkeysexception-no-host-keys-found-even
+	cnopts = MyCnOpts()
+	cnopts.log = False
+	cnopts.compression = False
+	cnopts.ciphers = None
+	cnopts.hostkeys = None
+
+	try:
+		if password.startswith('-----'):
+			# it is a key with \n instead of newlines.
+			with open('key.txt', 'w') as the_file:
+				the_file.write(password)
+			
+			return pysftp.Connection(host, username=user, private_key='key.txt', cnopts=cnopts)
+		else:
+			return pysftp.Connection(host, username=user, password=password, cnopts=cnopts)
+	except:
+		Trace['SFTP Connect'] = sys.exc_info()[0]
+		Message('could not connect')
+		Message(sys.exc_info())
+		quit(1)
 
 ###### sort a list file names based on imbedded timestamp
 def sortalist(listOfFileName,params):
@@ -108,34 +132,11 @@ def runAndWaitForImport(filename, impspec, action, max_runtime_in_minutes):
 class MyCnOpts:
 	pass
 
-# connect to SFTP
-try:
-	#not best practice, but avoids needing entry in .ssh/known_hosts
-	#from Joe Cool near end of https://bitbucket.org/dundeemt/pysftp/issues/109/hostkeysexception-no-host-keys-found-even
-	cnopts = MyCnOpts()
-	cnopts.log = False
-	cnopts.compression = False
-	cnopts.ciphers = None
-	cnopts.hostkeys = None
-	if parameters['SFTP']['Password'].startswith('-----'):
-		# it is a key with \n instead of newlines.
-		with open('key.txt', 'w') as the_file:
-			the_file.write(parameters['SFTP']['Password'])
-		
-		sftp = pysftp.Connection(parameters['SFTP']['url'],
-			username=parameters['SFTP']['UserName'],
-			private_key='key.txt',
-			cnopts = cnopts
-			)
-	else:
-		sftp = pysftp.Connection(parameters['SFTP']['url'],
-			username=parameters['SFTP']['UserName'],
-			password=parameters['SFTP']['Password'],
-			cnopts = cnopts
-			)
-except:
-	Trace['SFTP Connect'] = sys.exc_info()[0]
-	quit(1)
+
+sftp = sftpConnect(
+	parameters['SFTP']['url'],
+	parameters['SFTP']['UserName'],
+	parameters['SFTP']['Password'])
 
 
 sftp_directory = parameters['SFTP']['Directory']
@@ -162,28 +163,43 @@ for imp in parameters["IMPORT_ORDER"]:
 
 	for f in filteredFiles:
 		file_path = f'{sftp_directory}{f}'
-		processed_file_path = f'{sftp_directory}{PROCESSED_FOLDER_NAME}/{f}'
+		try:
+			processed_folder_name = parameters["IMPORTS"][imp]["processedFolderName"]
+		except KeyError:
+			# if no processed folder name specified, use default
+			processed_folder_name = DEFAULT_PROCESSED_FOLDER_NAME
+													  
+		processed_file_path = f'{sftp_directory}{processed_folder_name}/{f}'
 
 		Message(f)
 		try:
 			sftp.get(file_path, preserve_mtime=True)
 		except:
-			Message(sys.exc_info)
+			Message(processed_file_path+' '+sys.exc_info)
 			quit(1) # process files on next fun.  Error on getting file usually because file is still being written to.
 
 		if runAndWaitForImport(f, parameters["IMPORTS"][imp]["impspec"], parameters["IMPORTS"][imp]["action"], parameters["IMPORTS"][imp]["maxRuntimeInMinutes"]):
+			sftp = sftpConnect(
+				parameters['SFTP']['url'],
+				parameters['SFTP']['UserName'],
+				parameters['SFTP']['Password'])
+
 			if sftp.exists(processed_file_path):
 				sftp.remove(processed_file_path)
 
 			sftp.rename(file_path, processed_file_path)
 			Message("successfully imported {filename}".format(filename=f))
 			#quit()
+			try:
+				os.remove(f)
+			except:
+				None
 			continue
 		else:
 			#TODO error and send email
+			try:
+				os.remove(f)
+			except:
+				None
 			break
 
-		try:
-			os.remove(f)
-		except:
-			None
