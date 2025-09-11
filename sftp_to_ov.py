@@ -177,7 +177,7 @@ for imp in parameters["IMPORT_ORDER"]:
 			time.sleep(5) # wait a bit for SFTP/S3 to catch up
 			sftp.get(file_path, preserve_mtime=True)
 		except:
-			Message(f +' failed to get file {file_path} ')
+			Message(f +' failed to get file {file_path}')
 			Message(str(sys.exc_info()))
 			quit(1) # process files on next fun.  Error on getting file usually because file is still being written to.
 
