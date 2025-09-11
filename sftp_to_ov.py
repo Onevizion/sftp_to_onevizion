@@ -162,20 +162,23 @@ for imp in parameters["IMPORT_ORDER"]:
 		continue
 
 	for f in filteredFiles:
-		file_path = f'{sftp_directory}{f}'
+		file_path = os.path.join(sftp_directory, f)
 		try:
 			processed_folder_name = parameters["IMPORTS"][imp]["processedFolderName"]
 		except KeyError:
 			# if no processed folder name specified, use default
 			processed_folder_name = DEFAULT_PROCESSED_FOLDER_NAME
 													  
-		processed_file_path = f'{sftp_directory}{processed_folder_name}/{f}'
+		#processed_file_path = f'{sftp_directory}{processed_folder_name}/{f}'
+		processed_file_path = os.join(sftp_directory, processed_folder_name, f)
 
 		Message(f)
 		try:
+			time.sleep(5) # wait a bit for SFTP/S3 to catch up
 			sftp.get(file_path, preserve_mtime=True)
 		except:
-			Message(processed_file_path+' '+sys.exc_info)
+			Message(f +' failed to get file {file_path} ')
+			Message(str(sys.exc_info()))
 			quit(1) # process files on next fun.  Error on getting file usually because file is still being written to.
 
 		if runAndWaitForImport(f, parameters["IMPORTS"][imp]["impspec"], parameters["IMPORTS"][imp]["action"], parameters["IMPORTS"][imp]["maxRuntimeInMinutes"]):
@@ -186,6 +189,7 @@ for imp in parameters["IMPORT_ORDER"]:
 
 			if sftp.exists(processed_file_path):
 				sftp.remove(processed_file_path)
+				time.sleep(5) # wait a bit for SFTP/S3 to catch up
 
 			sftp.rename(file_path, processed_file_path)
 			Message("successfully imported {filename}".format(filename=f))
