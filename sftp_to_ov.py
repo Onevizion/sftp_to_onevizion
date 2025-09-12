@@ -170,7 +170,7 @@ for imp in parameters["IMPORT_ORDER"]:
 			processed_folder_name = DEFAULT_PROCESSED_FOLDER_NAME
 													  
 		#processed_file_path = f'{sftp_directory}{processed_folder_name}/{f}'
-		processed_file_path = os.join(sftp_directory, processed_folder_name, f)
+		processed_file_path = os.path.join(sftp_directory, processed_folder_name, f)
 
 		Message(f)
 		try:
