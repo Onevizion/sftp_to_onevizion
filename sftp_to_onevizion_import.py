@@ -2,18 +2,19 @@ import sys
 import subprocess
 import glob
 
-subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-r', 'python_dependencies.txt'])
+#subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-r', 'python_dependencies.txt'])
 
 
 import onevizion
 import argparse
-import pysftp
+import paramiko
 import re
 import time
 import base64
 import json
 import os
 from datetime import datetime
+from io import StringIO
 
 Description="""Import files from SFTP to OV in order
 """
@@ -118,32 +119,44 @@ def runAndWaitForImport(filename, impspec, action, maxRunTimeInMinutes):
 		return True
 
 
-class MyCnOpts:  #used by sftp connection
-	pass
+def sftpConnect(url, username, password):
 
-def sftpConnect(host, user, password):
-	#not best practice, but avoids needing entry in .ssh/known_hosts
-	#from Joe Cool near end of https://bitbucket.org/dundeemt/pysftp/issues/109/hostkeysexception-no-host-keys-found-even
-	cnopts = MyCnOpts()
-	cnopts.log = False
-	cnopts.compression = False
-	cnopts.ciphers = None
-	cnopts.hostkeys = None
+	def load_private_key_from_string(key_str: str, password: str = None):
+		key_file = StringIO(key_str)
+    
+		for KeyClass in (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey):
+			try:
+				key_file.seek(0)
+				return KeyClass.from_private_key(key_file, password=password)
+			except paramiko.ssh_exception.SSHException:
+				continue   # wrong key type, try next
+			except Exception as e:
+			# other real error
+				raise
 
+		raise ValueError("Unsupported or invalid private key format")	
+
+	# connect to SFTP
 	try:
-		if password.startswith('-----'):
-			# it is a key with \n instead of newlines.
-			with open('key.txt', 'w') as the_file:
-				the_file.write(password)
-			
-			return pysftp.Connection(host, username=user, private_key='key.txt', cnopts=cnopts)
+		transport = paramiko.Transport((url, 22))
+		if password.startswith("----"):
+			pkey = load_private_key_from_string(password, password=None)
+			transport.connect(
+				username=username, 
+				pkey=pkey
+			)
 		else:
-			return pysftp.Connection(host, username=user, password=password, cnopts=cnopts)
-	except:
-		Trace['SFTP Connect'] = sys.exc_info()[0]
-		Message('could not connect')
-		Message(sys.exc_info())
+			transport.connect(
+				username=username, 
+				password=password
+			)
+		sftp = paramiko.SFTPClient.from_transport(transport)
+		return sftp, transport
+	except Exception as e:
+		Trace["SFTP Connect"] = sys.exc_info()[0]
+		Message(f"could not connect: {e}")
 		quit(1)
+
 	
 
 #####  Main section
@@ -171,43 +184,11 @@ for row in Req.jsonData:
 
 	# connect to SFTP
 	password = SFtpPasswords[row['SOI_SFTP_HOST']][row['SOI_SFTP_USER_NAME']]
-	sftp = sftpConnect(row['SOI_SFTP_HOST'], row['SOI_SFTP_USER_NAME'], password)
-	'''	try:
-		#not best practice, but avoids needing entry in .ssh/known_hosts
-		#from Joe Cool near end of https://bitbucket.org/dundeemt/pysftp/issues/109/hostkeysexception-no-host-keys-found-even
-		cnopts = MyCnOpts()
-		cnopts.log = False
-		cnopts.compression = False
-		cnopts.ciphers = None
-		cnopts.hostkeys = None
-
-		password = SFtpPasswords[row['SOI_SFTP_HOST']][row['SOI_SFTP_USER_NAME']]
-
-		if password.startswith('-----'):
-			# it is a key with \n instead of newlines.
-			with open('key.txt', 'w') as the_file:
-				the_file.write(password)
-			
-			sftp = pysftp.Connection(row['SOI_SFTP_HOST'],
-				username=row['SOI_SFTP_USER_NAME'],
-				private_key='key.txt',
-				cnopts = cnopts
-				)
-		else:
-			sftp = pysftp.Connection(row['SOI_SFTP_HOST'],
-				username=row['SOI_SFTP_USER_NAME'],
-				password=password,
-				cnopts = cnopts
-				)
-	except:
-		Trace['SFTP Connect'] = sys.exc_info()[0]
-		Message('could not connect')
-		Message(sys.exc_info())
-		quit(1)
-	'''
+	sftp, transport = sftpConnect(row['SOI_SFTP_HOST'], row['SOI_SFTP_USER_NAME'], password)
+	
 	#todo error handling
 	# get complete list of files in directory
-	with sftp.cd(row['SOI_SFTP_FOLDER']):
+	with sftp.chdir(row['SOI_SFTP_FOLDER']):
 		files = sftp.listdir()
 
 	print(files)
@@ -237,11 +218,11 @@ for row in Req.jsonData:
 			pp.write(decodedbinary)
 
 	for f in filteredFiles:
-		Message(f)
+		Message(f'f = {f}')
 		try:
-			sftp.get(row['SOI_SFTP_FOLDER']+f, preserve_mtime=True)
-		except:
-			Message(sys.exc_info)
+			sftp.get(row['SOI_SFTP_FOLDER']+f, f)
+		except Exception as e:
+			Message(f'Error getting file {f} from SFTP: {e}')
 			try:
 				os.remove(f)
 			except:
@@ -249,6 +230,7 @@ for row in Req.jsonData:
 			quit(1) # process files on next fun.  Error on getting file usually because file is still being written to.
 
 		if row['SOI_PREPROCESSOR_COMMAND'] is not None:
+			Message(f'Preprocessing {f} with command {row["SOI_PREPROCESSOR_COMMAND"]}')
 			cp = subprocess.run(row['SOI_PREPROCESSOR_COMMAND'].replace('{filename}',f), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 			Message(cp.stdout.decode('utf-8'))
 			Message(cp)
@@ -259,8 +241,14 @@ for row in Req.jsonData:
 		else:
 			maxRunTimeInMinutes = int(row['SOI_MAX_RUNTIME_IN_MINUTES'])
 
-		if runAndWaitForImport(f,row['SOI_IMPORT_ID'],row['SOI_ACTION'],maxRunTimeInMinutes):
-			sftp = sftpConnect(row['SOI_SFTP_HOST'], row['SOI_SFTP_USER_NAME'], password) # re-connect to SFTP after import as connection might have been lost
+		if runAndWaitForImport(
+			f,row['SOI_IMPORT_ID'],row['SOI_ACTION'],maxRunTimeInMinutes
+		):
+			sftp, transport = sftpConnect(
+				row['SOI_SFTP_HOST'], 
+				row['SOI_SFTP_USER_NAME'], 
+				password
+			) # re-connect to SFTP after import as connection might have been lost
 			if row['SOI_EXTRA_SFTP_COMMAND'] is not None:
 				extracmd = "sftp."+row['SOI_EXTRA_SFTP_COMMAND'].replace('{filename}',f)
 				print(extracmd)

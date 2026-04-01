@@ -6,13 +6,15 @@ subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-r', 'python_dep
 
 import onevizion
 import argparse
-import pysftp
+#import pysftp
+import paramiko
 import re
 import time
 import base64
 import json
 import os
 from datetime import datetime
+from io import StringIO
 
 Description="""Import files from SFTP to OV in order with at most x at a time
 """
@@ -28,7 +30,7 @@ try:
 	OvIsToken  = params['OV']['IsToken'] == 'Yes'
 	SFtpPasswords = params['SFTP']
 except Exception as e:
-	raise "Please check settings by refering to documention in github repository"
+    raise Exception(f"Please check settings by referring to documentation in github repository: {e}")
 
 parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("-v", "--verbose", action='count', default=0, help="Print extra debug messages and save to a file. Attach file to email if sent.")
@@ -38,10 +40,50 @@ onevizion.Config["Verbosity"]=args.verbose
 Message = onevizion.Message
 Trace = onevizion.Config["Trace"]
 
+def sftpConnect(url, username, password):
+
+	def load_private_key_from_string(key_str: str, password: str = None):
+		key_file = StringIO(key_str)
+    
+		for KeyClass in (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey):
+			try:
+				key_file.seek(0)
+				return KeyClass.from_private_key(key_file, password=password)
+			except paramiko.ssh_exception.SSHException:
+				continue   # wrong key type, try next
+			except Exception as e:
+			# other real error
+				raise
+
+		raise ValueError("Unsupported or invalid private key format")	
+
+	# connect to SFTP
+	try:
+		transport = paramiko.Transport((url, 22))
+		if password.startswith("----"):
+			pkey = load_private_key_from_string(password, password=None)
+			transport.connect(
+				username=username, 
+				pkey=pkey
+			)
+		else:
+			transport.connect(
+				username=username, 
+				password=password
+			)
+		sftp = paramiko.SFTPClient.from_transport(transport)
+		return sftp, transport
+	except Exception as e:
+		Trace["SFTP Connect"] = sys.exc_info()[0]
+		Message(f"could not connect: {e}")
+		quit(1)
+
+
 def runningImports():
-	Imp = onevizion.Import(userName = OvUserName, password = OvPassword, URL = OvUrl, isTokenAuth=OvIsToken)
+	Imp = onevizion.Import(
+		userName = OvUserName, password = OvPassword, URL = OvUrl, isTokenAuth=OvIsToken
+	)
 	ProcessList = Imp.getProcessData(status = 'RUNNING')
-	print("***** Process List ***")
 	print(ProcessList)
 	if len(Imp.errors)>0:
 		Message(Imp.errors)
@@ -69,7 +111,14 @@ def sortalist(listOfFileName,dateprefix,datecruft,datefmt):
 		return newListOfFilename
 	else:
 		# administrators are more comfortable with oracle date formatting.  so change it into srtptime format if necessary
-		datefmt = datefmt.replace('YYYY','%Y').replace('MM','%m').replace('DD','%d').replace('HH','%H').replace('MI','%M').replace('SS','%S')
+		datefmt = (
+			datefmt.replace('YYYY','%Y')
+			.replace('MM','%m')
+			.replace('DD','%d')
+			.replace('HH','%H')
+			.replace('MI','%M')
+			.replace('SS','%S')
+		)
 		return sorted(newListOfFilename,key=return_date_from_filename)
 
 
@@ -95,9 +144,6 @@ def runImport(filename, impspec, action):
 		return True
 
 
-class MyCnOpts:  #used by sftp connection
-	pass
-
 currentRunningImports = runningImports()
 countRunningImports = len(currentRunningImports)
 
@@ -107,14 +153,33 @@ if countRunningImports >= OvMaxImports:
 	
 numberOfImportsToRun = OvMaxImports - countRunningImports
 
-Req = onevizion.Trackor(trackorType = 'SFTP_TO_OV', URL = OvUrl, userName=OvUserName, password=OvPassword)
+Req = onevizion.Trackor(
+	trackorType = 'SFTP_TO_OV', URL = OvUrl, userName=OvUserName, password=OvPassword
+)
 Req.read(filters = {'SOI_ENABLED':'1'}, 
-		fields = ['TRACKOR_KEY','SOI_SFTP_HOST', 'SOI_SFTP_USER_NAME', 'SOI_ORDER_TO_PROCESS',
-					'SOI_SFTP_FOLDER', 'SOI_FILE_MASK', 'SOI_IMPORT_NAME', 'SOI_ACTION', 'SOI_IMPORT_ID',
-					'SOI_SFTP_ARCHIVE_FOLDER', 'SOI_DAYS_TO_KEEP_IN_ARCHIVE',
-					'SOI_DATE_PORTION_OF_FILE_NAME', 'SOI_DATE_CRUFT_TO_REMOVE', 'SOI_DATE_FORMAT',
-					'SOI_PREPROCESSOR_SCRIPT','SOI_EXTRA_SFTP_COMMAND','SOI_PREPROCESSOR_COMMAND','SOI_MAX_RUNTIME_IN_MINUTES'], 
-		sort = {'SOI_ORDER_TO_PROCESS':'ASC'}, page = 1, perPage = 1000)
+		fields = [
+			'TRACKOR_KEY',
+			'SOI_SFTP_HOST', 
+			'SOI_SFTP_USER_NAME', 
+			'SOI_ORDER_TO_PROCESS',
+			'SOI_SFTP_FOLDER', 
+			'SOI_FILE_MASK', 
+			'SOI_IMPORT_NAME', 
+			'SOI_ACTION', 
+			'SOI_IMPORT_ID',
+			'SOI_SFTP_ARCHIVE_FOLDER', 
+			'SOI_DAYS_TO_KEEP_IN_ARCHIVE',
+			'SOI_DATE_PORTION_OF_FILE_NAME', 
+			'SOI_DATE_CRUFT_TO_REMOVE', 
+			'SOI_DATE_FORMAT',
+			'SOI_PREPROCESSOR_SCRIPT',
+			'SOI_EXTRA_SFTP_COMMAND',
+			'SOI_PREPROCESSOR_COMMAND',
+			'SOI_MAX_RUNTIME_IN_MINUTES'
+		], 
+		sort = {'SOI_ORDER_TO_PROCESS':'ASC'}, 
+		page = 1, 
+		perPage = 1000)
 
 if len(Req.errors)>0:
 	# TODO implement better error handling
@@ -124,8 +189,8 @@ if len(Req.errors)>0:
 currentImportName = ""
 
 for row in Req.jsonData:
-	#print(row)
-	print('*** attempting to process "{importName}" in the "{importFolder}" directory'.format(importName=row["SOI_IMPORT_NAME"], importFolder=row["SOI_SFTP_FOLDER"]))
+	print(row)
+	#print('*** attempting to process "{importName}" in the "{importFolder}" directory'.format(importName=row["SOI_IMPORT_NAME"], importFolder=row["SOI_SFTP_FOLDER"]))
 	if numberOfImportsToRun == 0:
 		print("skipping due to full import queue")
 		break
@@ -135,47 +200,20 @@ for row in Req.jsonData:
 			if row["SOI_IMPORT_NAME"] == i["import_name"]:
 				currentImportName = row["SOI_IMPORT_NAME"]
 				break
-
-	if currentImportName != row["SOI_IMPORT_NAME"] and currentImportName != "":
-		print('Skipping "{importName}" because all "{currentImportName}" have not finished.'.format(importName=row["SOI_IMPORT_NAME"],currentImportName=currentImportName))
-		continue
+	else:
+		if currentImportName != row["SOI_IMPORT_NAME"] and currentImportName != "":
+			print('Skipping "{importName}" because all "{currentImportName}" have not finished.'.format(importName=row["SOI_IMPORT_NAME"],currentImportName=currentImportName))
+			break
 
 	# connect to SFTP
-	try:
-		#not best practice, but avoids needing entry in .ssh/known_hosts
-		#from Joe Cool near end of https://bitbucket.org/dundeemt/pysftp/issues/109/hostkeysexception-no-host-keys-found-even
-		cnopts = MyCnOpts()
-		cnopts.log = False
-		cnopts.compression = False
-		cnopts.ciphers = None
-		cnopts.hostkeys = None
-
-		password = SFtpPasswords[row['SOI_SFTP_HOST']][row['SOI_SFTP_USER_NAME']]
-
-		if password.startswith('-----'):
-			# it is a key with \n instead of newlines.
-			with open('key.txt', 'w') as the_file:
-				the_file.write(password)
-			
-			sftp = pysftp.Connection(row['SOI_SFTP_HOST'],
-				username=row['SOI_SFTP_USER_NAME'],
-				private_key='key.txt',
-				cnopts = cnopts
-				)
-		else:
-			sftp = pysftp.Connection(row['SOI_SFTP_HOST'],
-				username=row['SOI_SFTP_USER_NAME'],
-				password=password,
-				cnopts = cnopts
-				)
-	except:
-		Trace['SFTP Connect'] = sys.exc_info()[0]
-		Message('could not connect')
-		Message(sys.exc_info())
-		quit(1)
+	sftp, transport = sftpConnect(
+		row['SOI_SFTP_HOST'],
+		row['SOI_SFTP_USER_NAME'],
+		SFtpPasswords[row['SOI_SFTP_HOST']][row['SOI_SFTP_USER_NAME']]
+	)
 
 	# get complete list of files in directory
-	with sftp.cd(row['SOI_SFTP_FOLDER']):
+	with sftp.chdir(row['SOI_SFTP_FOLDER']):
 		files = sftp.listdir()
 
 	#print(files)
@@ -214,7 +252,7 @@ for row in Req.jsonData:
 			break
 
 		try:
-			sftp.get(row['SOI_SFTP_FOLDER']+f, preserve_mtime=True)
+			sftp.get(row['SOI_SFTP_FOLDER']+f, f)
 		except:
 			Message(sys.exc_info)
 			try:
@@ -225,7 +263,12 @@ for row in Req.jsonData:
 		
 
 		if row['SOI_PREPROCESSOR_COMMAND'] is not None:
-			cp = subprocess.run(row['SOI_PREPROCESSOR_COMMAND'].replace('{filename}',f), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+			cp = subprocess.run(
+				row['SOI_PREPROCESSOR_COMMAND'].replace('{filename}',f), 
+				shell=True, 
+				stdout=subprocess.PIPE, 
+				stderr=subprocess.STDOUT
+			)
 			Message(cp.stdout.decode('utf-8'))
 			Message(cp)
 			#TODO Add Error Handling
@@ -241,28 +284,34 @@ for row in Req.jsonData:
 				extracmd = "sftp."+row['SOI_EXTRA_SFTP_COMMAND'].replace('{filename}',f)
 				print(extracmd)
 				exec(extracmd)
-			elif row['SOI_SFTP_ARCHIVE_FOLDER'] is None or row['SOI_SFTP_ARCHIVE_FOLDER'] == '':
-				sftp.remove(row['SOI_SFTP_FOLDER']+f)
+			elif (
+				row['SOI_SFTP_ARCHIVE_FOLDER'] is None 
+				or row['SOI_SFTP_ARCHIVE_FOLDER'] == ''
+			):
+				sftp.remove(row['SOI_SFTP_FOLDER'] + f)
 			else:
 				try:
 					sftp.remove(row['SOI_SFTP_ARCHIVE_FOLDER']+f)
-				except:
-					None
-				sftp.rename(row['SOI_SFTP_FOLDER']+f,row['SOI_SFTP_ARCHIVE_FOLDER']+f)
+				except OSError:
+					pass
+				sftp.rename(
+					row['SOI_SFTP_FOLDER']+f,
+					row['SOI_SFTP_ARCHIVE_FOLDER']+f
+				)
 				Message("successfully imported {filename}".format(filename=f))
 
 			try:
 				os.remove(f)
-			except:
-				None
+			except OSError:
+				pass
 			
 			numberOfImportsToRun = numberOfImportsToRun - 1
 
 		else:
 			try:
 				os.remove(f)
-			except:
-				None
+			except OSError:
+				pass
 			quit(1)
 
 	if row['SOI_PREPROCESSOR_SCRIPT']['file_name'] is not None:
