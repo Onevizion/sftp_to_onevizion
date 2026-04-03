@@ -188,8 +188,8 @@ for row in Req.jsonData:
 	
 	#todo error handling
 	# get complete list of files in directory
-	with sftp.chdir(row['SOI_SFTP_FOLDER']):
-		files = sftp.listdir()
+	sftp.chdir(row['SOI_SFTP_FOLDER']):
+	files = sftp.listdir()
 
 	print(files)
 
