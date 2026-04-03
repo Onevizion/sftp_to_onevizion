@@ -188,7 +188,7 @@ for row in Req.jsonData:
 	
 	#todo error handling
 	# get complete list of files in directory
-	sftp.chdir(row['SOI_SFTP_FOLDER']):
+	sftp.chdir(row['SOI_SFTP_FOLDER'])
 	files = sftp.listdir()
 
 	print(files)
