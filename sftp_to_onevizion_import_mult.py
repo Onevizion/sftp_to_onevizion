@@ -261,6 +261,12 @@ for row in Req.jsonData:
 				None
 			quit(1) # process files on next fun.  Error on getting file usually because file is still being written to.
 		
+		# Check if file is zero bytes
+		if os.path.getsize(f) == 0:
+			Message(f"Warning: {f} is a zero byte file. Deleting and skipping.")
+			sftp.remove(row['SOI_SFTP_FOLDER']+f)
+			os.remove(f)
+			continue
 
 		if row['SOI_PREPROCESSOR_COMMAND'] is not None:
 			cp = subprocess.run(

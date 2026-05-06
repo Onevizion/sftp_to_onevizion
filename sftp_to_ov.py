@@ -228,6 +228,13 @@ try:
 				Message(f +f' failed to get file {file_path} with error: {e}')
 				quit(1) # process files on next fun.  Error on getting file usually because file is still being written to.
 
+			# Check if file is zero bytes
+			if os.path.getsize(f) == 0:
+				Message(f"Warning: {f} is a zero byte file. Deleting local and SFTP copies and skipping.")
+				sftp.remove(file_path)
+				os.remove(f)
+				continue
+
 			if runAndWaitForImport(
 				f, 
 				parameters["IMPORTS"][imp]["impspec"], 
